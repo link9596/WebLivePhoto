@@ -1,0 +1,108 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+.live-photo {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 3 / 4;
+    background: transparent;
+    border-radius: 6px;
+    overflow: hidden;
+    cursor: pointer;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: pan-y pinch-zoom;
+    margin-left: auto;
+    margin-right: auto;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+.live-photo-img,
+.live-photo-video {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    pointer-events: none;
+    transform-origin: center center;
+    border-radius: 6px;
+}
+
+.live-photo-img {
+    z-index: 2;
+    opacity: 1;
+    transform: scale(1);
+    transition: opacity 0.3s linear, transform 0.3s linear;
+}
+
+.live-photo-video {
+    z-index: 1;
+    transform: scale(1);
+    transition: transform 0.3s linear;
+}
+
+.live-photo.is-playing .live-photo-img {
+    opacity: 0;
+    transform: scale(1.08);
+}
+
+.live-photo.is-playing .live-photo-video {
+    transform: scale(1.08);
+}
+
+.live-photo-badge {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(255, 255, 255, 0.5);
+    backdrop-filter: blur(4px);
+    padding: 2px 8px 2px 2px;
+    border-radius: 5px;
+    pointer-events: none;
+}
+
+.live-photo-icon {
+    width: 20px;
+    height: 20px;
+    position: relative;
+}
+
+.live-photo-icon-svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
+.live-photo-disabled-icon {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: none;
+}
+
+.live-photo-text {
+    font-size: 12px;
+    font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    font-weight: 500;
+    letter-spacing: 0.5px;
+    color: #000;
+    line-height: 1;
+    margin-top: 1px;
+}
+
+.live-photo-progress-ring {
+    transition: stroke-dashoffset 0.2s linear;
+}
