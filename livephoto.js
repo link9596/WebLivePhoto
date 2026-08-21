@@ -1,4 +1,4 @@
-//unspport aspect-ratio browser
+// unspport aspect-ratio browser
 (function() {
     function addPaddingTopFallback() {
         var containers = document.querySelectorAll('.live-photo');
@@ -80,6 +80,15 @@
                 progressStrokeWidth: 4,
                 timeoutMs: 20000
             }, options);
+
+            // 过渡结束后重置视频的相关句柄
+            this._resetOnTransitionEnd = null;
+            this._resetFallbackTimer = null;
+            this._onResetDone = null;
+
+            // 播放启动等待的句柄
+            this._playingHandler = null;
+            this._playingTimeout = null;
 
             this._initBadge();
             this._initVideo();
@@ -307,29 +316,75 @@
             }
         }
 
-        _endGracefully() {
-            if (this.isEndingGracefully || this.loadFailed) return;
-            this.isEndingGracefully = true;
-            this.container.classList.remove('is-playing');
-            this.videoEl.pause();
-            const onTransitionEnd = () => {
-                this.videoEl.currentTime = 0;
-                this.isPlaying = false;
-                this.isEndingGracefully = false;
-                this.videoEl.removeEventListener('transitionend', onTransitionEnd);
-            };
-            this.videoEl.addEventListener('transitionend', onTransitionEnd, { once: true });
-            setTimeout(() => {
-                if (this.isEndingGracefully) {
+        // ─── 过渡结束后重置视频 ───
+        _scheduleVideoReset() {
+            this._cancelScheduledReset();
+
+            if (!this.imgEl) return;
+            const style = getComputedStyle(this.imgEl);
+            const hasTransition = style.transitionDuration !== '0s' && parseFloat(style.transitionDuration) > 0;
+
+            const doReset = () => {
+                if (!this.isPlaying) {
                     this.videoEl.currentTime = 0;
-                    this.isPlaying = false;
-                    this.isEndingGracefully = false;
                 }
-            }, 500);
+                this._cancelScheduledReset();
+                if (this._onResetDone) {
+                    this._onResetDone();
+                    this._onResetDone = null;
+                }
+            };
+
+            if (!hasTransition) {
+                doReset();
+                return;
+            }
+
+            const onTransitionEnd = (e) => {
+                if (e.target !== this.imgEl) return;
+                doReset();
+            };
+            this.imgEl.addEventListener('transitionend', onTransitionEnd, { once: true });
+            this._resetOnTransitionEnd = () => {
+                this.imgEl.removeEventListener('transitionend', onTransitionEnd);
+                this._resetOnTransitionEnd = null;
+            };
+
+            this._resetFallbackTimer = setTimeout(doReset, 500);
         }
 
+        _cancelScheduledReset() {
+            if (this._resetOnTransitionEnd) {
+                this._resetOnTransitionEnd();
+                this._resetOnTransitionEnd = null;
+            }
+            if (this._resetFallbackTimer) {
+                clearTimeout(this._resetFallbackTimer);
+                this._resetFallbackTimer = null;
+            }
+            this._onResetDone = null;
+        }
+
+        // ─── 清理等待播放的句柄 ───
+        _cleanupPlayingWaiter() {
+            if (this._playingHandler) {
+                this.videoEl.removeEventListener('playing', this._playingHandler);
+                this._playingHandler = null;
+            }
+            if (this._playingTimeout) {
+                clearTimeout(this._playingTimeout);
+                this._playingTimeout = null;
+            }
+        }
+
+        // ─── 播放 / 停止 ───
         start() {
-            if (this.isPlaying || this.isEndingGracefully || this.loadFailed) return;
+            if (this.isPlaying || this.loadFailed) return;
+
+            this.isEndingGracefully = false;
+            this._cancelScheduledReset();
+            this._cleanupPlayingWaiter();
+
             if (this.videoEl.readyState < 2) {
                 this._preloadVideo();
                 this.videoEl.addEventListener('canplay', () => this._doStart(), { once: true });
@@ -341,27 +396,81 @@
         _doStart() {
             if (this.loadFailed) return;
             this.isPlaying = true;
-            this.videoEl.currentTime = 0;
-            this.container.classList.add('is-playing');
-            this.videoEl.play().catch(e => {
-                console.warn('LivePhoto: play failed', e);
-                this.stop();
-            });
+
+            // 确保视频在开头
+            if (this.videoEl.currentTime !== 0) {
+                this.videoEl.currentTime = 0;
+            }
+
+            // 先调用 play()，但不立即显示视频
+            const playPromise = this.videoEl.play();
+            if (playPromise !== undefined) {
+                playPromise.catch(e => {
+                    console.warn('LivePhoto: play failed', e);
+                    this.stop();
+                });
+            }
+
+            // 等待视频播放后再切换画面
+            const onPlaying = () => {
+                this._cleanupPlayingWaiter();
+                if (!this.isPlaying) return;
+                this.container.classList.add('is-playing');
+            };
+
+            this.videoEl.addEventListener('playing', onPlaying, { once: true });
+            this._playingHandler = onPlaying;
+
+            this._playingTimeout = setTimeout(() => {
+                this._cleanupPlayingWaiter();
+                if (this.isPlaying) {
+                    this.container.classList.add('is-playing');
+                }
+            }, 500);
         }
 
         stop() {
             if ((!this.isPlaying && !this.isEndingGracefully) || this.loadFailed) return;
-            if (this.isEndingGracefully) this.isEndingGracefully = false;
+            const wasEnding = this.isEndingGracefully;
+            this.isEndingGracefully = false;
             this.isPlaying = false;
+
             this.container.classList.remove('is-playing');
+            this._cleanupPlayingWaiter();
+
             if (!this.videoEl.paused) this.videoEl.pause();
+
+            if (!wasEnding) {
+                this._scheduleVideoReset();
+            }
         }
 
+        _endGracefully() {
+            if (this.isEndingGracefully || this.loadFailed) return;
+            this.isEndingGracefully = true;
+            this.isPlaying = false;
+            this.container.classList.remove('is-playing');
+            this.videoEl.pause();
+            this._cleanupPlayingWaiter();
+
+            this._scheduleVideoReset();
+            this._onResetDone = () => {
+                this.isEndingGracefully = false;
+            };
+        }
+
+        // ─── 触摸事件 ───
         _onTouchStart(e) {
             if (this.loadFailed) return;
             this.touchStartX = e.touches[0].clientX;
             this.touchStartY = e.touches[0].clientY;
             this._preloadVideo();
+
+            // 提前将视频移到开头
+            if (this.videoEl.currentTime !== 0 && !this.isPlaying && !this.isEndingGracefully) {
+                this.videoEl.currentTime = 0;
+            }
+
             this._startLongPressTimer();
         }
 
@@ -415,6 +524,8 @@
                 clearTimeout(this.loadTimeout);
                 this.loadTimeout = null;
             }
+            this._cancelScheduledReset();
+            this._cleanupPlayingWaiter();
             const badge = this.container.querySelector('.live-photo-badge');
             if (badge) badge.remove();
             this.container.classList.remove('is-playing');
