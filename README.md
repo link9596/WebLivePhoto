@@ -1,7 +1,12 @@
+<div align="center">
+<img style="width:800px" src="https://raw.githubusercontent.com/link9596/WebLivePhoto/refs/heads/main/livephoto-demo.png" alt="">
+
 # 优雅地在网页上展示你的实况照片！
 ## Without APPLE LivephotoKit JS & Show Your LivePhoto on Web Easily !
 
-[Demo](https://atlinker.cn/demo/livephoto.html)
+查看☞ [Demo](https://atlinker.cn/demo/livephoto.html)
+
+</div>
 
 # 食用文档 Document
 ## 安装 Install
