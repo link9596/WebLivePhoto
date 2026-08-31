@@ -16,7 +16,7 @@
 Download livephoto.css & livephoto.css and include:
 ```html
 <link rel="stylesheet" href=".../livephoto.css">
-<script src=".../live-photo.js"></script>
+<script src=".../livephoto.js"></script>
 ```
 
 ## 初始化 Initialize
