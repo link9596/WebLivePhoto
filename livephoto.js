@@ -34,7 +34,7 @@
 
 /**
  * WebLivePhoto Kit
- * 
+ *
  *   1. HTML ：
  *      <div class="live-photo" id="myLivePhoto">
  *          <img class="live-photo-img" src="cover.jpg" alt="...">
@@ -53,6 +53,10 @@
         root.LivePhoto = factory();
     }
 }(typeof self !== 'undefined' ? self : this, function () {
+
+    /* ★ iOS 预热：多实例互斥，避免手指滑过列表时多个视频同时后台播放 */
+    let activePrimeInstance = null;
+
     class LivePhotoInstance {
         constructor(container, options = {}) {
             this.container = container;
@@ -90,6 +94,9 @@
             this._playingHandler = null;
             this._playingTimeout = null;
 
+            // ★ iOS 预热标记
+            this._primePending = false;
+
             this._initBadge();
             this._initVideo();
             this._bindEvents();
@@ -99,6 +106,13 @@
             return /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
                 ('ontouchstart' in window) ||
                 (navigator.maxTouchPoints > 0);
+        }
+
+        /* ★ iOS 预热：判定 iOS 设备（含 iPadOS 桌面模式） */
+        _isIOSSafari() {
+            const ua = navigator.userAgent;
+            return /iPad|iPhone|iPod/.test(ua) ||
+                (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
         }
 
         _initBadge() {
@@ -316,6 +330,41 @@
             }
         }
 
+        /* ★ iOS 预热：在 touchstart 同步栈内 play()，拿 iOS 播放授权 */
+        _primeVideo() {
+            if (!this._isIOSSafari()) return;                    // 非 iOS 完全跳过
+            if (this.loadFailed || this.isPlaying || this.isEndingGracefully) return;
+            if (this._primePending) return;
+
+            if (activePrimeInstance && activePrimeInstance !== this) {
+                activePrimeInstance._abortPrime();               // 前一个实例的预热让位
+            }
+            activePrimeInstance = this;
+            this._primePending = true;
+
+            const p = this.videoEl.play();
+            if (p !== undefined) {
+                p.catch(() => {                                  // 低电量等场景被拒，静默降级
+                    this._primePending = false;
+                    if (activePrimeInstance === this) activePrimeInstance = null;
+                });
+            }
+        }
+
+        /* ★ iOS 预热：撤销预热（长按未成立时调用） */
+        _abortPrime() {
+            if (!this._primePending) return;
+            this._primePending = false;
+            if (activePrimeInstance === this) activePrimeInstance = null;
+            if (this.isPlaying) return;                          // 长按已成立，交给 stop()
+
+            if (!this.videoEl.paused) this.videoEl.pause();
+            try {
+                if (this.videoEl.currentTime > 0) this.videoEl.currentTime = 0;
+            } catch (e) {}
+            // 不动 fake progress / progressMode / 进度圈，保持"轻点后进度条继续"的原有行为
+        }
+
         // ─── 过渡结束后重置视频 ───
         _scheduleVideoReset() {
             this._cancelScheduledReset();
@@ -395,8 +444,29 @@
 
         _doStart() {
             if (this.loadFailed) return;
-            this.isPlaying = true;
 
+            /* ★ iOS 预热：先接管预热状态 */
+            const wasPrimed = this._primePending;
+            this.isPlaying = true;
+            this._primePending = false;
+            if (activePrimeInstance === this) activePrimeInstance = null;
+
+            // ★ 预热已把视频播起来 → 回 0 + 直接切 UI，不重复 play
+            if (wasPrimed || !this.videoEl.paused) {
+                if (this.videoEl.currentTime !== 0) {
+                    try { this.videoEl.currentTime = 0; } catch (e) {}
+                }
+                if (this.videoEl.paused) {
+                    const p2 = this.videoEl.play();
+                    if (p2 !== undefined) {
+                        p2.catch(e => { console.warn('LivePhoto: prime play failed', e); this.stop(); });
+                    }
+                }
+                this.container.classList.add('is-playing');
+                return;
+            }
+
+            // ↓↓↓ 以下为原逻辑（桌面 hover / prime 被系统拒绝时走这里） ↓↓↓
             // 确保视频在开头
             if (this.videoEl.currentTime !== 0) {
                 this.videoEl.currentTime = 0;
@@ -471,23 +541,30 @@
                 this.videoEl.currentTime = 0;
             }
 
+            this._primeVideo();                                  // ★ iOS 预热：同步栈内 play()
+
             this._startLongPressTimer();
         }
 
         _onTouchMove(e) {
-            if (this.longPressTimer && this._isTouchMoved(e)) this._clearLongPressTimer();
+            if (this.longPressTimer && this._isTouchMoved(e)) {
+                this._clearLongPressTimer();
+                this._abortPrime();                              // ★ iOS 预热：滑动取消
+            }
         }
 
         _onTouchEnd(e) {
             if (this.loadFailed) return;
             this._clearLongPressTimer();
             if (this.isPlaying) this.stop();
+            else this._abortPrime();                             // ★ iOS 预热：长按未成立，撤销预热
         }
 
         _onTouchCancel(e) {
             if (this.loadFailed) return;
             this._clearLongPressTimer();
             if (this.isPlaying) this.stop();
+            else this._abortPrime();                             // ★ iOS 预热：撤销预热
         }
 
         _isTouchMoved(e) {
@@ -518,6 +595,7 @@
         }
 
         destroy() {
+            this._abortPrime();                                  // ★ iOS 预热：清理预热状态
             this._clearLongPressTimer();
             this._stopAllFakeProgress();
             if (this.loadTimeout) {
